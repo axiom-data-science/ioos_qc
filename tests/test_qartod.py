@@ -9,6 +9,7 @@ import numpy.testing as npt
 import pandas as pd
 
 from ioos_qc import qartod as qartod
+from ioos_qc.config import QcConfig
 
 L = logging.getLogger('ioos_qc')
 L.setLevel(logging.INFO)
@@ -748,6 +749,12 @@ class QartodClimatologyTest(unittest.TestCase):
             vspan=(70, 80),
             zspan=(10, 100)
         )
+        # different time range, with depths - does not overlap with any members with zspan=None
+        self.cc.add(
+           tspan=(np.datetime64('2013-01'), np.datetime64('2014-01')),
+           vspan=(70, 80),
+           zspan=(10, 100)
+        )
        
     def _run_test(self, test_inputs, expected_result):
         times, values, depths = zip(*test_inputs)
@@ -852,13 +859,32 @@ class QartodClimatologyTest(unittest.TestCase):
             ),
             # Not run, has depth that's outside of given depth ranges
             (
-                np.datetime64('2012-01-02'),
+                np.datetime64('2013-01-02'),
                 79,
+                101
+            ),
+            # matches time of check with no depth specified, valid value
+            (
+                np.datetime64('2011-01-02'),
+                15,
                 101
             )
         ]
-        expected_result = [1, 1, 1, 3, 3, 2]
+        expected_result = [1, 1, 1, 3, 3, 2, 1]
         self._run_test(test_inputs, expected_result)
+
+    def test_climatology_via_qcconfig_without_depth(self):
+        ccfg = [{'tspan': ['2018-01-01', '2018-01-31'], 'vspan': [5, 10]}]
+        time = np.array(['2017-12-31', '2018-01-01', '2018-01-02', '2018-01-30', '2018-01-31', '2018-02-01'])
+        parameter = np.array([6, 11, 8, 14, 5, 4])
+        cfg = QcConfig({'qartod': { 'climatology_test': {'config': ccfg, 'inp': parameter, 'tinp': time}}})
+
+        results = cfg.run()['qartod']['climatology_test']
+        expected_result = [2, 3, 1, 3, 1, 2]
+        npt.assert_array_equal(
+            results,
+            np.ma.array(expected_result)
+        )
 
 
 class QartodSpikeTest(unittest.TestCase):
