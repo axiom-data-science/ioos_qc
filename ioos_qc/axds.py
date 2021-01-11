@@ -66,6 +66,9 @@ def valid_range_test(inp : Sequence[any],
     if dtype is None and hasattr(inp, 'dtype'):
         dtype = inp.dtype
 
+    # Save original shape
+    original_shape = inp.shape
+
     if dtype is None:
         L.warning("Trying to guess data input type, try specifying the dtype parameter")
         # Try to figure out the dtype so masked values can be calculated
@@ -86,8 +89,6 @@ def valid_range_test(inp : Sequence[any],
         inp = np.ma.masked_invalid(np.array(inp, dtype=dtype))
         valid_span =  np.ma.masked_invalid(np.array(valid_span, dtype=dtype))
 
-    # Save original shape
-    original_shape = inp.shape
     inp = inp.flatten()
 
     # Start with everything as passing (1)

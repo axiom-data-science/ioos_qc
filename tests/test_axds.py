@@ -9,6 +9,9 @@ import numpy as np
 import numpy.testing as npt
 
 from ioos_qc import axds
+from ioos_qc.config import Config
+from ioos_qc.streams import NumpyStream
+from ioos_qc.results import collect_results
 
 L = logging.getLogger('ioos_qc')
 L.setLevel(logging.INFO)
@@ -202,3 +205,26 @@ class AxdsValidTimeBoundsTest(unittest.TestCase):
                                       end_inclusive=False),
                 np.array([4, 4, 4, 1, 4, 4])
             )
+
+    def test_with_config(self):
+
+        config_str = """
+            variable1:
+                axds:
+                    valid_range_test:
+                        valid_span: ['2015-01-01T02:00:00', '2015-01-01T04:00:00']
+        """
+
+        config = Config(config_str)
+
+        # This config only produces one context
+        context = config.contexts[0]
+
+        assert axds.valid_range_test in context.streams['variable1'].methods
+        assert {
+            'valid_span': ['2015-01-01T02:00:00', '2015-01-01T04:00:00']
+        } == context.streams['variable1'].methods[axds.valid_range_test]
+
+        ns = NumpyStream(self.times)
+        results = ns.run(config)
+        results = collect_results(results, how='dict')

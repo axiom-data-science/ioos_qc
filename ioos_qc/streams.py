@@ -165,7 +165,11 @@ class NumpyStream:
         geom: numpy array of geometry, this or lat and lon are required if using regional subsets
         """
         self.inp = inp
-        self.tinp = pd.DatetimeIndex(mapdates(time))
+        try:
+            assert time is not None
+            self.tinp = pd.DatetimeIndex(mapdates(time))
+        except BaseException:
+            self.tinp = time
         self.zinp = z
         self.lat = lat
         self.lon = lon
@@ -183,7 +187,7 @@ class NumpyStream:
 
             # This is a boolean array of what was subset and tested based on the initial data feed
             # Take the index of the subset and set those to true
-            subset_indexes = np.full_like(self.tinp, 1, dtype=bool)
+            subset_indexes = np.full_like(self.inp, 1, dtype=bool)
 
             if context.region:
                 # TODO: yeah this does nothing right now
@@ -203,12 +207,15 @@ class NumpyStream:
                     L.warning('Skipping window subset, "time" array must be passed into "run"')
                     pass
 
-            subset_kwargs = dict(
-                tinp=self.tinp[subset_indexes],
-                zinp=self.zinp[subset_indexes],
-                lon=self.lon[subset_indexes],
-                lat=self.lat[subset_indexes],
-            )
+            subset_kwargs = {}
+            if self.tinp is not None:
+                subset_kwargs['tinp'] = self.tinp[subset_indexes]
+            if self.zinp is not None:
+                subset_kwargs['zinp'] = self.zinp[subset_indexes]
+            if self.lon is not None:
+                subset_kwargs['lon'] = self.lon[subset_indexes]
+            if self.lat is not None:
+                subset_kwargs['lat'] = self.lat[subset_indexes]
 
             for stream_id, stream in context.streams.items():
 
@@ -225,7 +232,11 @@ class NumpyStream:
                     L.error(f"Input is not a dict or np.ndarray, skipping {stream_id}")
                     continue
 
-                data_input = runinput[subset_indexes]
+                # Slicing with [True] changes the shape of an array so always re-shape. That
+                # will happen when the input array is of size 1. Corner case but still need to
+                # handle it here.
+                original_shape = runinput.shape
+                data_input = runinput[subset_indexes].reshape(original_shape)
 
                 # This evaulates the generator test results
                 run_result = list(stream.run(
