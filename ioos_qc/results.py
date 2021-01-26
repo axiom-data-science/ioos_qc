@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 # coding=utf-8
+import logging
 from typing import NamedTuple, List
 from dataclasses import dataclass
 from collections import OrderedDict as odict, defaultdict
@@ -7,6 +8,8 @@ from collections import OrderedDict as odict, defaultdict
 import numpy as np
 import pandas as pd
 from ioos_qc.qartod import QartodFlags
+
+L = logging.getLogger(__name__)  # noqa
 
 
 class StreamConfigResult(NamedTuple):
@@ -54,7 +57,7 @@ class CollectedResult:
 
     @property
     def hash_key(self) -> str:
-        return f'{self.stream_id}: {self.package}.{self.test}'
+        return f'{self.stream_id}:{self.package}.{self.test}'
 
 
 def collect_results(results, how='list'):
@@ -74,6 +77,7 @@ def collect_results_list(results):
     # ContextResults
     for r in results:
 
+        cr = None
         # Shortcut for StreamConfigResult objects when someone uses QcConfig.run() directly
         # and doesn't go through a Stream object
         if isinstance(r, StreamConfigResult):
@@ -99,7 +103,7 @@ def collect_results_list(results):
 
             if cr.hash_key not in collected:
                 # Set the initial values
-                cr.results = np.ma.masked_all(shape=r.subset_indexes.shape, dtype=r.data.dtype)
+                cr.results = np.ma.masked_all(shape=r.subset_indexes.shape, dtype=tr.results.dtype)
                 cr.data = np.ma.masked_all(shape=r.subset_indexes.shape, dtype=r.data.dtype)
                 cr.tinp = np.ma.masked_all(shape=r.subset_indexes.shape, dtype=r.tinp.dtype)
                 cr.zinp = np.ma.masked_all(shape=r.subset_indexes.shape, dtype=r.zinp.dtype)
@@ -109,18 +113,19 @@ def collect_results_list(results):
 
             collected[cr.hash_key].results[r.subset_indexes] = tr.results
 
-        if r.subset_indexes.all():
-            collected[cr.hash_key].data = r.data
-            collected[cr.hash_key].tinp = r.tinp
-            collected[cr.hash_key].zinp = r.zinp
-            collected[cr.hash_key].lat = r.lat
-            collected[cr.hash_key].lon = r.lon
-        else:
-            collected[cr.hash_key].data[r.subset_indexes] = r.data
-            collected[cr.hash_key].tinp[r.subset_indexes] = r.tinp
-            collected[cr.hash_key].zinp[r.subset_indexes] = r.zinp
-            collected[cr.hash_key].lat[r.subset_indexes] = r.lat
-            collected[cr.hash_key].lon[r.subset_indexes] = r.lon
+        if cr is not None:
+            if r.subset_indexes.all():
+                collected[cr.hash_key].data = r.data
+                collected[cr.hash_key].tinp = r.tinp
+                collected[cr.hash_key].zinp = r.zinp
+                collected[cr.hash_key].lat = r.lat
+                collected[cr.hash_key].lon = r.lon
+            else:
+                collected[cr.hash_key].data[r.subset_indexes] = r.data
+                collected[cr.hash_key].tinp[r.subset_indexes] = r.tinp
+                collected[cr.hash_key].zinp[r.subset_indexes] = r.zinp
+                collected[cr.hash_key].lat[r.subset_indexes] = r.lat
+                collected[cr.hash_key].lon[r.subset_indexes] = r.lon
 
     return list(collected.values())
 

@@ -2,6 +2,7 @@
 # coding=utf-8
 import inspect
 import logging
+from typing import List
 import simplejson as json
 from pathlib import Path
 from importlib import import_module
@@ -11,8 +12,10 @@ import pandas as pd
 import netCDF4 as nc4
 
 from ioos_qc.config import Config
+from ioos_qc.qartod import aggregate
 from ioos_qc.utils import GeoNumpyDateEncoder, cf_safe_name
-from ioos_qc.results import collect_results
+from ioos_qc.results import collect_results, CollectedResult
+
 
 L = logging.getLogger(__name__)  # noqa
 
@@ -21,16 +24,26 @@ class BaseStore:
 
     def save(self, *args, **kwargs):
         """
-        Serialize results to a store. This could save file or publish messages.
+        Serialize results to a store. This could save a file or publish messages.
         """
+        pass
+
+    @property
+    def stream_ids(self) -> List[str]:
+        """
+        A list of stream_ids to save to the store
+        """
+        pass
 
 
 class PandasStore(BaseStore):
     """Store results in a dataframe"""
 
     def __init__(self, results, axes: dict = None):
+        # OK, time to evaluate the actual tests now that we need the results
         self.results = list(results)
         self.collected_results = collect_results(self.results, how='list')
+        self._stream_ids = [ cr.stream_id for cr in self.collected_results ]
         self.axes = axes or {
             't': 'time',
             'z': 'z',
@@ -38,29 +51,50 @@ class PandasStore(BaseStore):
             'x': 'lon'
         }
 
-    def save(self, write_data: bool = False, include: list = None, exclude: list = None) -> pd.DataFrame:
+    @property
+    def stream_ids(self) -> List[str]:
+        return self._stream_ids
+
+
+    def compute_aggregate(self, name='rollup'):
+        """ Internally compute the total aggregate and add it to the results
+        """
+        self.aggregate = CollectedResult(
+            stream_id='',
+            package='',
+            test=name,
+            function=aggregate,
+            results=aggregate(self.collected_results)
+        )
+        self.collected_results.append(self.aggregate)
+
+    def save(self,
+             write_data: bool = False,
+             write_axes: bool = True,
+             include: list = None,
+             exclude: list = None) -> pd.DataFrame:
 
         df = pd.DataFrame()
 
         for cr in self.collected_results:
 
             # Add time axis
-            if self.axes['t'] not in df and cr.tinp is not None and cr.tinp.size != 0:
+            if write_axes is True and self.axes['t'] not in df and cr.tinp is not None and cr.tinp.size != 0:
                 L.info(f"Adding column {self.axes['t']} from stream {cr.stream_id}")
                 df[self.axes['t']] = cr.tinp
 
             # Add z axis
-            if self.axes['z'] not in df and cr.zinp is not None and cr.zinp.size != 0:
+            if write_axes is True and self.axes['z'] not in df and cr.zinp is not None and cr.zinp.size != 0:
                 L.info(f"Adding columm {self.axes['z']} from stream {cr.stream_id}")
                 df[self.axes['z']] = cr.zinp
 
             # Add x axis
-            if self.axes['x'] not in df and cr.lon is not None and cr.lon.size != 0:
+            if write_axes is True and self.axes['x'] not in df and cr.lon is not None and cr.lon.size != 0:
                 L.info(f"Adding columm {self.axes['x']} from stream {cr.stream_id}")
                 df[self.axes['x']] = cr.lon
 
             # Add x axis
-            if self.axes['y'] not in df and cr.lat is not None and cr.lat.size != 0:
+            if write_axes is True and self.axes['y'] not in df and cr.lat is not None and cr.lat.size != 0:
                 L.info(f"Adding columm {self.axes['y']} from stream {cr.stream_id}")
                 df[self.axes['y']] = cr.lat
 
@@ -77,7 +111,11 @@ class PandasStore(BaseStore):
                 df[cr.stream_id] = cr.data
 
             # Add QC results column
-            column_name = cf_safe_name(f'{cr.stream_id}.{cr.package}.{cr.test}')
+            # Aggregate will have None stream_id, so allow it to be that way!
+            stream_label = f'{cr.stream_id}.' if cr.stream_id else ''
+            package_label = f'{cr.package}.' if cr.package else ''
+            test_label = f'{cr.test}' if cr.test else ''
+            column_name = cf_safe_name(f'{stream_label}{package_label}{test_label}')
             if column_name not in df:
                 df[column_name] = cr.results
             else:
@@ -89,14 +127,20 @@ class PandasStore(BaseStore):
 class CFNetCDFStore(BaseStore):
 
     def __init__(self, results, axes=None, **kwargs):
+        # OK, time to evaluate the actual tests now that we need the results
         self.results = list(results)
         self.collected_results = collect_results(self.results, how='list')
+        self._stream_ids = [ cr.stream_id for cr in self.collected_results ]
         self.axes = axes or {
             't': 'time',
             'z': 'z',
             'y': 'lat',
             'x': 'lon'
         }
+
+    @property
+    def stream_ids(self) -> List[str]:
+        return self._stream_ids
 
     def save(self, path_or_ncd, dsg, config: Config, dsg_kwargs: dict = {}, write_data: bool = False, include: list = None, exclude: list = None):
         ps = PandasStore(self.results, self.axes)
@@ -201,6 +245,9 @@ class NetcdfStore:
                     continue
 
                 source_var = ncd.variables[vname]
+                # Keep track of the test names so we can add to the source's
+                # ancillary_variables at the end
+                qcvar_names = []
 
                 for modu, tests in qcobj.items():
 
@@ -210,9 +257,6 @@ class NetcdfStore:
                         L.error('No ioos_qc test package "{}" was found, skipping.'.format(modu))
                         continue
 
-                    # Keep track of the test names so we can add to the source's
-                    # ancillary_variables at the end
-                    qcvar_names = []
                     for testname, testresults in tests.items():
 
                         # Try to find a qc variable that matches this config
@@ -272,7 +316,8 @@ class NetcdfStore:
 
                 # Update the source ancillary_variables
                 existing = getattr(source_var, 'ancillary_variables', '').split(' ')
-                existing += qcvar_names
+                if qcvar_names:
+                    existing += qcvar_names
                 source_var.ancillary_variables = ' '.join(list(set(existing))).strip()
 
             if len(config.contexts) > 1:

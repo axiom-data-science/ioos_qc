@@ -88,7 +88,7 @@ class PandasStream:
                     L.warning(f'{stream_id} is not a column in the dataframe, skipping')
                     continue
                 stream_ids.append(stream_id)
-            subset = self.df.loc[:, stream_ids + self.axis_columns]
+            subset = self.df.loc[:, list(set(stream_ids + self.axis_columns))]
 
             if context.region:
                 # TODO: yeah this does nothing right now
