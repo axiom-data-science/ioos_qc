@@ -15,9 +15,9 @@ from ioos_qc.utils import (
     isfixedlength,
     add_flag_metadata,
     great_circle_distance,
-    mapdates
+    mapdates,
+    distance_from_target
 )
-
 
 L = logging.getLogger(__name__)  # noqa
 
@@ -85,10 +85,13 @@ def qartod_compare(vectors : Sequence[Sequence[N]]
 
 @add_flag_metadata(standard_name='location_test_quality_flag',
                    long_name='Location Test Quality Flag')
-def location_test(lon : Sequence[N],
-                  lat : Sequence[N],
-                  bbox : Tuple[N, N, N, N] = (-180, -90, 180, 90),
-                  range_max : N = None
+def location_test(lon: Sequence[N],
+                  lat: Sequence[N],
+                  bbox: Tuple[N, N, N, N] = (-180, -90, 180, 90),
+                  range_max: N = None,
+                  target_lat: [N] = None,
+                  target_lon: [N] = None,
+                  target_range: N = None
                   ) -> np.ma.core.MaskedArray:
     """Checks that a location is within reasonable bounds.
 
@@ -103,6 +106,11 @@ def location_test(lon : Sequence[N],
         lat: Latitudes as a numeric numpy array or a list of numbers.
         bbox: A length 4 tuple expressed in (minx, miny, maxx, maxy) [optional].
         range_max: Maximum allowed range expressed in geodesic curve distance (meters).
+        target_lat: Target Latitude as numeric numpy array or a list of numbers,
+            it can either same size as lat/lon or a unique values
+        target_lon: Target Longitude as numeric numpy array or a list of numbers,
+            it can either same size as lat/lon or a unique values
+        target_range: Maximum allowed range in  geodesic curve distance (meters) away from target position.
 
     Returns:
         A masked array of flag values equal in size to that of the input.
@@ -130,6 +138,34 @@ def location_test(lon : Sequence[N],
     lon = lon.flatten()
     lat = lat.flatten()
 
+    # Handle target inputs
+    # If any target inputs are provided
+    if target_lon is not None or target_lat is not None or target_range is not None:
+        # All target inputs should be there
+        if target_lon is not None and target_lat is not None and target_range is not None:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                target_lat = np.ma.masked_invalid(np.array(target_lat).astype(np.float64))
+                target_lon = np.ma.masked_invalid(np.array(target_lon).astype(np.float64))
+            if type(target_range) not in [int, float]:
+                raise ValueError('Bad target_range input. target_range should either float or int.')
+
+        elif target_lon is not None and target_lat is not None and target_range is None:
+            raise ValueError('Missing target_range input if target_lat and target_lon are provided')
+        else:
+            raise ValueError('Missing some target inputs')
+
+        if target_lon.shape != target_lat.shape:
+            raise ValueError(
+                'Target_lon ({0.shape}) and target_lat ({1.shape}) are different shapes'.format(
+                    target_lon, target_lat
+                )
+            )
+
+        # Flatten target_lon and target_lat
+        target_lon = target_lon.flatten()
+        target_lat = target_lat.flatten()
+
     # Start with everything as passing (1)
     flag_arr = np.ma.ones(lon.size, dtype='uint8')
 
@@ -147,7 +183,24 @@ def location_test(lon : Sequence[N],
         d = great_circle_distance(lat, lon)
         flag_arr[d > range_max] = QartodFlags.SUSPECT
 
-    # Ignore warnings when comparing NaN values even though they are masked
+    # Distance From Target Test
+    if target_lat is not None and target_lon is not None and \
+            target_range is not None:
+        # If only one value is given assume to be constant for all positions
+        if target_lon.size == 1 and target_lat.size == 1:
+            (target_lon, target_lat) = (target_lon * np.ones(lat.size), target_lat * np.ones(lat.size))
+
+        # Compute the range from the target location
+        d_from_target = distance_from_target(lat, lon, target_lat, target_lon)
+
+        # Flag as suspect distances greater than target_range
+        with np.errstate(invalid='ignore'):
+            flag_arr[d_from_target > target_range] = QartodFlags.SUSPECT
+
+        # Flag as missing target_location distance
+        flag_arr[(target_lat.mask | target_lon.mask)] = QartodFlags.MISSING
+
+        # Ignore warnings when comparing NaN values even though they are masked
     # https://github.com/numpy/numpy/blob/master/doc/release/1.8.0-notes.rst#runtime-warnings-when-comparing-nan-numbers
     with np.errstate(invalid='ignore'):
         flag_arr[(lon < bbox.minx) | (lat < bbox.miny) |
