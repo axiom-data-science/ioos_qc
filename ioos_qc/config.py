@@ -9,22 +9,20 @@ Attributes:
 """
 import io
 import logging
-import re
 import warnings
 from pathlib import Path
 from copy import deepcopy
+from inspect import signature
 from functools import partial
 from typing import Union, List
-from dataclasses import dataclass
 from importlib import import_module
-from inspect import getmodule, signature
-from collections import namedtuple, defaultdict
-from collections import OrderedDict as odict
+from dataclasses import dataclass, field
+from collections import namedtuple, OrderedDict as odict
 
+import numpy as np
 from shapely.geometry import shape, GeometryCollection
 
-from ioos_qc.results import collect_results
-from ioos_qc.results import StreamConfigResult
+from ioos_qc.results import CallResult, collect_results
 from ioos_qc.utils import load_config_as_dict, dict_depth
 
 L = logging.getLogger(__name__)  # noqa
@@ -35,14 +33,23 @@ tw = namedtuple('TimeWindow', ('starting', 'ending'), defaults=[None, None])
 
 @dataclass(frozen=True)
 class Context:
-    window: tw = dataclass.field(default_factory=tw)
-    region: GeometryCollection = dataclass.field(default=None)
-    attrs: dict = dataclass.field(default_factory=dict)
+    window: tw = field(default_factory=tw)
+    region: GeometryCollection = field(default=None)
+    attrs: dict = field(default_factory=dict)
 
     def __eq__(self, other):
         if isinstance(other, Context):
             return self.window == other.window and self.region == other.region
         return False
+
+    def __key__(self):
+        return (
+            self.window,
+            getattr(self.region, 'wkb', None)
+        )
+
+    def __hash__(self):
+        return hash(self.__key__())
 
     def __repr__(self):
         return f'<Context window={self.window} region={self.region}>'
@@ -52,8 +59,8 @@ class Context:
 class Call:
     stream_id: str
     call: partial
-    context: Context = dataclass.field(default_factory=Context)
-    attrs: dict = dataclass.field(default_factory=dict)
+    context: Context = field(default_factory=Context)
+    attrs: dict = field(default_factory=dict)
 
     @property
     def window(self):
@@ -64,12 +71,16 @@ class Call:
         return self.context.region
 
     @property
+    def func(self) -> str:
+        return self.call.func
+
+    @property
     def module(self) -> str:
-        return self.call.func.__module__
+        return self.func.__module__.replace('ioos_qc.', '')
 
     @property
     def method(self) -> str:
-        return self.call.func.__name__
+        return self.func.__name__
 
     @property
     def method_path(self) -> str:
@@ -83,10 +94,21 @@ class Call:
     def kwargs(self) -> dict:
         return self.call.keywords
 
+    def config(self) -> dict:
+        return {
+            self.module: {
+                self.method: self.kwargs
+            }
+        }
+
+    @property
+    def is_aggregate(self) -> bool:
+        return hasattr(self.func, 'aggregate') and self.func.aggregate is True
+
     def __key__(self):
         return (
             self.stream_id,
-            self.context,
+            self.context.__hash__(),
             self.module,
             self.method,
             self.args,
@@ -108,70 +130,42 @@ class Call:
         if self.context.window.ending:
             ret += f' ending={self.window.ending}'
         if self.context.region is not None:
-            return ' region=True'
+            ret += ' region=True'
         ret += f' {self.module}.{self.method}({self.args}, {self.kwargs})>'
         return ret
 
     def run(self, **passedkwargs):
-        aggregates = []
         results = []
-        # results = defaultdict(odict)
 
-        for runfunc, kwargs in self.methods.items():
+        # Get our own copy of the kwargs object so we can change it
+        testkwargs = deepcopy(passedkwargs)
+        # Merges dicts
+        testkwargs = odict({ **self.kwargs, **testkwargs })
 
-            # This is just easier to query for them rather than set in the self.methods
-            # method. Just a bit of python magic to try and simplify.
-            testname = runfunc.__name__
-            package = getmodule(runfunc).__name__.split('.')[1]
-
-            # Skip any aggregate flags and run them at the end
-            if getattr(runfunc, 'aggregate', False) is True:
-                L.debug("Skipping aggregate (will run after all other tests)")
-                aggregates.append((package, testname, runfunc))
-                continue
-
-            # Get our own copy of the kwargs object so we can change it
-            testkwargs = deepcopy(passedkwargs)
-            # Merges dicts
-            testkwargs = odict({ **kwargs, **testkwargs })
-
-            # Get the arguments that the test functions support
-            sig = signature(runfunc)
-            valid_keywords = [
-                p.name for p in sig.parameters.values()
-                if p.kind == p.POSITIONAL_OR_KEYWORD
-            ]
-            testkwargs = {
-                k: v for k, v in testkwargs.items()
-                if k in valid_keywords
-            }
-            try:
-                results.append(
-                    StreamConfigResult(
-                        package=package,
-                        test=testname,
-                        function=runfunc,
-                        results=runfunc(**testkwargs)
-                    )
-                )
-                # results[package][testname] = runfunc(**testkwargs)
-            except Exception as e:
-                L.error(f'Could not run "{package}.{testname}: {e}')
-                continue
-
-        # Now run the aggregates at the end when all other results are complete
-        for aggpackage, aggtestname, aggfunc in aggregates:
+        # Get the arguments that the test functions support
+        sig = signature(self.func)
+        valid_keywords = [
+            p.name for p in sig.parameters.values()
+            if p.kind == p.POSITIONAL_OR_KEYWORD
+        ]
+        testkwargs = {
+            k: v for k, v in testkwargs.items()
+            if k in valid_keywords
+        }
+        try:
             results.append(
-                StreamConfigResult(
-                    package=aggpackage,
-                    test=aggtestname,
-                    function=aggfunc,
-                    results=aggfunc(results)
+                CallResult(
+                    package=self.module,
+                    test=self.method,
+                    function=self.func,
+                    results=self.func(**testkwargs)
                 )
             )
-            # results[aggpackage][aggtestname] = aggfunc(results, functions=tests_run)
+        except Exception as e:
+            L.error(f'Could not run "{self.module}.{self.method}: {e}')
 
         return results
+
 
 def extract_calls(source) -> List[Call]:
     """
@@ -202,7 +196,7 @@ def extract_calls(source) -> List[Call]:
             for c in source if hasattr(c, 'calls')
         ]
         return calls
-    elif isinstance(Config):
+    elif isinstance(source, Config):
         # Config object
         return source.calls
     elif hasattr(source, 'calls'):
@@ -222,7 +216,7 @@ class Config:
     class only pares various formats and versions of a config into a list of Call objects.
     """
 
-    def __init__(self, source, version=None):
+    def __init__(self, source, version=None, default_stream_key='_stream'):
         """
         Args:
             source: The QC configuration representation in one of the following formats:
@@ -259,12 +253,54 @@ class Config:
                 # This is a StreamConfig
                 self._calls += list(ContextConfig(odict(streams=self.config)).calls)
             else:
-                # This is a QC Config
-                raise ValueError("Can not add context to a QC Config object. Create it manually.")
+                # This is a QcConfig
+                self._calls += list(ContextConfig(odict(streams={default_stream_key: self.config})).calls)
+                #raise ValueError("Can not add context to a QC Config object. Create it manually.")
+
+    @property
+    def contexts(self):
+        """
+        Group the calls into context groups and return them
+        """
+        contexts = {}
+        for c in self._calls:
+            if c.context in contexts:
+                contexts[c.context].append(c)
+            else:
+                contexts[c.context] = [c]
+        return contexts
+
+    @property
+    def stream_ids(self):
+        """
+        Return a list of unique stream_ids for the Config
+        """
+
+        streams = []
+        stream_map = {}
+
+        for c in self._calls:
+            if c.stream_id not in stream_map:
+                stream_map[c.stream_id] = True
+                streams.append(c.stream_id)
+
+        return streams
 
     @property
     def calls(self):
         return self._calls
+        # Could need this in the future
+        # return [
+        #     c for c in self._calls
+        #     if not hasattr(c.func, 'aggregate') or c.func.aggregate is False
+        # ]
+
+    @property
+    def aggregate_calls(self):
+        return [
+            c for c in self._calls
+            if hasattr(c.func, 'aggregate') and c.func.aggregate is True
+        ]
 
     def has(self, stream_id : str, method: Union[callable, str]):
         if isinstance(method, str):
@@ -278,6 +314,13 @@ class Config:
                     c.method == method.__name__):
                     return c
         return False
+
+    def calls_by_stream_id(self, stream_id) -> List[Call]:
+        calls = []
+        for c in self._calls:
+            if c.stream_id == stream_id:
+                calls.append(c)
+        return calls
 
     def add(self, source) -> None:
         """
@@ -331,26 +374,24 @@ class ContextConfig:
     def __init__(self, source: ConfigTypes):
         self.config = load_config_as_dict(source)
 
-        # Region
         self._calls = []
-        self.region = None
         self.attrs = self.config.get('attrs', {})
 
+        # Region
+        self.region = None
         if 'region' in self.config:
             # Convert region to a GeometryCollection Shapely object.
-            # buffer(0) is a trick for fixing scenarios where polygons have overlapping coordinates
-            # https://medium.com/@pramukta/recipe-importing-geojson-into-shapely-da1edf79f41d
             if isinstance(self.config['region'], GeometryCollection):
                 self.region = self.config['region']
             elif self.config['region'] and 'features' in self.config['region']:
                 # Feature based GeoJSON
                 self.region = GeometryCollection([
-                    shape(feature['geometry']).buffer(0) for feature in self.config['region']['features']
+                    shape(feature['geometry']) for feature in self.config['region']['features']
                 ])
             elif self.config['region'] and 'geometry' in self.config['region']:
                 # Geometry based GeoJSON
                 self.region = GeometryCollection([
-                    shape(self.config['region']['geometry']).buffer(0)
+                    shape(self.config['region']['geometry'])
                 ])
             else:
                 L.warning('Ignoring region because it could not be parsed, is it valid GeoJSON?')
@@ -360,6 +401,8 @@ class ContextConfig:
             self.window = self.config['window']
         elif 'window' in self.config:
             self.window = tw(**self.config['window'])
+        else:
+            self.window = tw()
 
         self.context = Context(
             window=self.window,
@@ -422,7 +465,7 @@ class ContextConfig:
         self._calls.extend([ e for e in extracted if e.context == self.context ])
 
     def __str__(self):
-        sc = list(self.streams.keys())
+        # sc = list(self.streams.keys())
         return (
             f"<ContextConfig "
             f"calls={len(self._calls)} "
@@ -433,3 +476,57 @@ class ContextConfig:
 
     def __repr__(self):
         return self.__str__()
+
+
+class QcConfig(Config):
+    def __init__(self, source, default_stream_key='_stream'):
+        """
+        A Config objects with no concept of a Stream ID. Typically used when running QC on a single
+        stream. This just sets up a stream with the name passed in as the "default_stream_key"
+        parameter.
+
+        Args:
+            source: The QC configuration representation in one of the following formats:
+                python dict or odict
+                JSON/YAML filepath (str or Path object)
+                JSON/YAML str
+                JSON/YAML StringIO
+                netCDF4/xarray filepath
+                netCDF4/xarray Dataset
+                list of Call objects
+            default_stream_key: The internal name of the stream, defaults to "_stream"
+        """
+        warnings.warn(
+            "The QcConfig object is deprecated, please use Config directly",
+            DeprecationWarning
+        )
+        self._default_stream_key = default_stream_key
+        super().__init__(source, default_stream_key=default_stream_key)
+
+    def run(self, **passedkwargs):
+        from ioos_qc.streams import NumpyStream
+        # Cleanup kwarg names
+        passedkwargs['time'] = passedkwargs.pop('tinp', None)
+        passedkwargs['z'] = passedkwargs.pop('zinp', None)
+        # Convert input to numpy arrays which is required for NumpySteam
+        for k in ['inp', 'time', 'z', 'lat', 'lon', 'geom']:
+            if k not in passedkwargs or passedkwargs[k] is None:
+                continue
+            if not isinstance(passedkwargs[k], np.ndarray):
+                passedkwargs[k] = np.array(passedkwargs[k])
+        # Run the checks
+        np_stream = NumpyStream(**passedkwargs)
+        # Collect the results
+        results = collect_results(np_stream.run(self), how='dict')
+        # Strip out the default_stream_key
+        return results[self._default_stream_key]
+
+
+class NcQcConfig(Config):
+    def __init__(self, *args, **kwargs):
+        raise NotImplementedError(
+            (
+                'The NcQcConfig object has been replaced by ioos_qc.config.Config '
+                'and ioos_qc.streams.XarrayStream'
+            )
+        )

@@ -33,7 +33,6 @@ class PandasStreamTest(unittest.TestCase):
             streams:
                 variable1:
                     qartod:
-                        aggregate:
                         gross_range_test:
                             suspect_span: [20, 30]
                             fail_span: [10, 40]
@@ -52,14 +51,15 @@ class PandasStreamTest(unittest.TestCase):
 
     def test_run(self):
         ps = PandasStream(self.df)
-        results = ps.run(self.config)
-        results = collect_results(results, how='dict')
+        raw_results = ps.run(self.config)
+        results = collect_results(raw_results, how='dict')
 
         # First ten (0-9 values) fail
         npt.assert_array_equal(
             results['variable1']['qartod']['gross_range_test'][0:10],
             np.array([4, 4, 4, 4, 4, 4, 4, 4, 4, 4])
         )
+
         # Next ten (10-19 values) suspect
         npt.assert_array_equal(
             results['variable1']['qartod']['gross_range_test'][10:20],
@@ -82,11 +82,6 @@ class PandasStreamTest(unittest.TestCase):
             results['variable1']['qartod']['gross_range_test'][40:50],
             np.array([3, 4, 4, 4, 4, 4, 4, 4, 4, 4])
         )
-        # There is only one test, so assert the aggregate is the same as the single result
-        npt.assert_array_equal(
-            results['variable1']['qartod']['gross_range_test'],
-            results['variable1']['qartod']['aggregate']
-        )
 
 
 class NumpyStreamTestLightConfig(unittest.TestCase):
@@ -96,7 +91,6 @@ class NumpyStreamTestLightConfig(unittest.TestCase):
             streams:
                 variable1:
                     qartod:
-                        aggregate:
                         gross_range_test:
                             suspect_span: [20, 30]
                             fail_span: [10, 40]
@@ -143,11 +137,6 @@ class NumpyStreamTestLightConfig(unittest.TestCase):
         npt.assert_array_equal(
             results['variable1']['qartod']['gross_range_test'][40:50],
             np.array([3, 4, 4, 4, 4, 4, 4, 4, 4, 4])
-        )
-        # There is only one test, so assert the aggregate is the same as the single result
-        npt.assert_array_equal(
-            results['variable1']['qartod']['gross_range_test'],
-            results['variable1']['qartod']['aggregate']
         )
 
 
@@ -162,7 +151,6 @@ class NumpyStreamTest(unittest.TestCase):
             streams:
                 variable1:
                     qartod:
-                        aggregate:
                         gross_range_test:
                             suspect_span: [20, 30]
                             fail_span: [10, 40]
@@ -210,11 +198,6 @@ class NumpyStreamTest(unittest.TestCase):
             results['variable1']['qartod']['gross_range_test'][40:50],
             np.array([3, 4, 4, 4, 4, 4, 4, 4, 4, 4])
         )
-        # There is only one test, so assert the aggregate is the same as the single result
-        npt.assert_array_equal(
-            results['variable1']['qartod']['gross_range_test'],
-            results['variable1']['qartod']['aggregate']
-        )
 
 
 class NetcdfStreamTest(unittest.TestCase):
@@ -228,7 +211,6 @@ class NetcdfStreamTest(unittest.TestCase):
             streams:
                 variable1:
                     qartod:
-                        aggregate:
                         gross_range_test:
                             suspect_span: [20, 30]
                             fail_span: [10, 40]
@@ -281,11 +263,6 @@ class NetcdfStreamTest(unittest.TestCase):
             results['variable1']['qartod']['gross_range_test'][40:50],
             np.array([3, 4, 4, 4, 4, 4, 4, 4, 4, 4])
         )
-        # There is only one test, so assert the aggregate is the same as the single result
-        npt.assert_array_equal(
-            results['variable1']['qartod']['gross_range_test'],
-            results['variable1']['qartod']['aggregate']
-        )
 
 
 class XarrayStreamTest(unittest.TestCase):
@@ -299,7 +276,6 @@ class XarrayStreamTest(unittest.TestCase):
             streams:
                 variable1:
                     qartod:
-                        aggregate:
                         gross_range_test:
                             suspect_span: [20, 30]
                             fail_span: [10, 40]
@@ -352,11 +328,6 @@ class XarrayStreamTest(unittest.TestCase):
             results['variable1']['qartod']['gross_range_test'][40:50],
             np.array([3, 4, 4, 4, 4, 4, 4, 4, 4, 4])
         )
-        # There is only one test, so assert the aggregate is the same as the single result
-        npt.assert_array_equal(
-            results['variable1']['qartod']['gross_range_test'],
-            results['variable1']['qartod']['aggregate']
-        )
 
 
 class XarrayStreamManyContextTest(unittest.TestCase):
@@ -370,13 +341,11 @@ class XarrayStreamManyContextTest(unittest.TestCase):
                     streams:
                         variable1:
                             qartod:
-                                aggregate:
                                 gross_range_test:
                                     suspect_span: [3, 4]
                                     fail_span: [2, 5]
                         variable2:
                             qartod:
-                                aggregate:
                                 gross_range_test:
                                     suspect_span: [23, 24]
                                     fail_span: [22, 25]
@@ -387,13 +356,11 @@ class XarrayStreamManyContextTest(unittest.TestCase):
                     streams:
                         variable1:
                             qartod:
-                                aggregate:
                                 gross_range_test:
                                     suspect_span: [43, 44]
                                     fail_span: [42, 45]
                         variable2:
                             qartod:
-                                aggregate:
                                 gross_range_test:
                                     suspect_span: [23, 24]
                                     fail_span: [22, 25]
@@ -434,11 +401,6 @@ class XarrayStreamManyContextTest(unittest.TestCase):
             results['variable1']['qartod']['gross_range_test'][40:48],
             np.array([4, 4, 3, 1, 1, 3, 4, 4])
         )
-        # There is only one test, so assert the aggregate is the same as the single result
-        npt.assert_array_equal(
-            results['variable1']['qartod']['gross_range_test'],
-            results['variable1']['qartod']['aggregate']
-        )
 
         # Variable 2
         npt.assert_array_equal(
@@ -453,11 +415,6 @@ class XarrayStreamManyContextTest(unittest.TestCase):
             results['variable2']['qartod']['gross_range_test'][28:50],
             np.full((22,), 4)
         )
-        # There is only one test, so assert the aggregate is the same as the single result
-        npt.assert_array_equal(
-            results['variable2']['qartod']['gross_range_test'],
-            results['variable2']['qartod']['aggregate']
-        )
 
 
 class PandasStreamManyContextTest(unittest.TestCase):
@@ -471,13 +428,11 @@ class PandasStreamManyContextTest(unittest.TestCase):
                     streams:
                         variable1:
                             qartod:
-                                aggregate:
                                 gross_range_test:
                                     suspect_span: [3, 4]
                                     fail_span: [2, 5]
                         variable2:
                             qartod:
-                                aggregate:
                                 gross_range_test:
                                     suspect_span: [23, 24]
                                     fail_span: [22, 25]
@@ -488,13 +443,11 @@ class PandasStreamManyContextTest(unittest.TestCase):
                     streams:
                         variable1:
                             qartod:
-                                aggregate:
                                 gross_range_test:
                                     suspect_span: [43, 44]
                                     fail_span: [42, 45]
                         variable2:
                             qartod:
-                                aggregate:
                                 gross_range_test:
                                     suspect_span: [23, 24]
                                     fail_span: [22, 25]
@@ -531,11 +484,6 @@ class PandasStreamManyContextTest(unittest.TestCase):
             results['variable1']['qartod']['gross_range_test'][40:48],
             np.array([4, 4, 3, 1, 1, 3, 4, 4])
         )
-        # There is only one test, so assert the aggregate is the same as the single result
-        npt.assert_array_equal(
-            results['variable1']['qartod']['gross_range_test'],
-            results['variable1']['qartod']['aggregate']
-        )
 
         # Variable 2
         npt.assert_array_equal(
@@ -550,11 +498,6 @@ class PandasStreamManyContextTest(unittest.TestCase):
             results['variable2']['qartod']['gross_range_test'][28:50],
             np.full((22,), 4)
         )
-        # There is only one test, so assert the aggregate is the same as the single result
-        npt.assert_array_equal(
-            results['variable2']['qartod']['gross_range_test'],
-            results['variable2']['qartod']['aggregate']
-        )
 
     def test_run_list_results(self):
         ps = PandasStream(self.df)
@@ -562,9 +505,7 @@ class PandasStreamManyContextTest(unittest.TestCase):
         results = collect_results(results, how='list')
 
         var1_gr = next(res for res in results if res.stream_id == 'variable1' and res.test == 'gross_range_test')
-        var1_agg = next(res for res in results if res.stream_id == 'variable1' and res.test == 'aggregate')
         var2_gr = next(res for res in results if res.stream_id == 'variable2' and res.test == 'gross_range_test')
-        var2_agg = next(res for res in results if res.stream_id == 'variable2' and res.test == 'aggregate')
         # Variable 1
         # Actual data returned in full
         npt.assert_array_equal(
@@ -573,7 +514,7 @@ class PandasStreamManyContextTest(unittest.TestCase):
         )
         # QC tests
         npt.assert_array_equal(
-            var1_gr.data[0:8],
+            var1_gr.results[0:8],
             np.array([4, 4, 3, 1, 1, 3, 4, 4])
         )
         npt.assert_array_equal(
@@ -583,11 +524,6 @@ class PandasStreamManyContextTest(unittest.TestCase):
         npt.assert_array_equal(
             var1_gr.results[40:48],
             np.array([4, 4, 3, 1, 1, 3, 4, 4])
-        )
-        # There is only one test, so assert the aggregate is the same as the single result
-        npt.assert_array_equal(
-            var1_gr.results,
-            var1_agg.results
         )
 
         # Variable 2
@@ -602,9 +538,4 @@ class PandasStreamManyContextTest(unittest.TestCase):
         npt.assert_array_equal(
             var2_gr.results[28:50],
             np.full((22,), 4)
-        )
-        # There is only one test, so assert the aggregate is the same as the single result
-        npt.assert_array_equal(
-            var2_gr.results,
-            var2_agg.results
         )

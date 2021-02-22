@@ -3,9 +3,13 @@
 import logging
 import unittest
 from datetime import datetime
+from functools import partial
 
+from shapely.geometry import Point, GeometryCollection
+
+import ioos_qc
 from ioos_qc import qartod
-from ioos_qc.config import Config
+from ioos_qc.config import Config, Context, Call, tw
 
 L = logging.getLogger('ioos_qc')
 L.setLevel(logging.INFO)
@@ -14,11 +18,10 @@ L.handlers = [logging.StreamHandler()]
 
 class StreamConfigLoadTest(unittest.TestCase):
     def setUp(self):
-        self.config_str = """
+        config_str = """
             variable1:
                 not_a_module:
                 qartod:
-                    aggregate:
                     gross_range_test:
                         suspect_span: [1, 11]
                         fail_span: [0, 12]
@@ -27,38 +30,41 @@ class StreamConfigLoadTest(unittest.TestCase):
                     not_a_test:
                         foo: [1, null]
         """
-        self.config = Config(self.config_str)
+        self.config = Config(config_str)
+        self.context = Context()
+        self.calls = [
+            Call(
+                stream_id='variable1',
+                context=self.context,
+                call=partial(
+                    ioos_qc.qartod.gross_range_test,
+                    (),
+                    suspect_span=[1, 11],
+                    fail_span=[0, 12]
+                )
+            ),
+            Call(
+                stream_id='variable1',
+                context=self.context,
+                call=partial(
+                    ioos_qc.qartod.location_test,
+                    (),
+                    bbox=[-80, 40, -70, 60]
+                )
+            )
+        ]
 
-    def test_config_load(self):
-        # This config only produces one context
-        context = self.config.contexts[0]
-
-        # The `methods` has keys which are the actual functions. This is
-        # totally valid as the python function implements the __hash__ method.
-        assert 'variable1' in context.streams.keys()
-        assert qartod.aggregate in context.streams['variable1'].methods
-        assert {} == context.streams['variable1'].methods[qartod.aggregate]
-
-        assert qartod.gross_range_test in context.streams['variable1'].methods
-        assert {
-            'suspect_span': [1, 11],
-            'fail_span': [0, 12]
-        } == context.streams['variable1'].methods[qartod.gross_range_test]
-
-        assert qartod.location_test in context.streams['variable1'].methods
-        assert {
-            'bbox': [-80, 40, -70, 60]
-        } == context.streams['variable1'].methods[qartod.location_test]
-
-        # Nothing will end up in `methods` that isn't a valid function.
-        # These are just here as more of a documentation point
-        assert 'not_a_test' not in context.streams['variable1'].methods
-        assert 'not_a_module' not in context.streams['variable1'].methods
+    def test_load(self):
+        for context, calls in self.config.contexts.items():
+            assert context == self.context
+            assert len(calls) == 2
+            for c in calls:
+                assert c in self.calls
 
 
 class ContextConfigLoadTest(unittest.TestCase):
     def setUp(self):
-        config = """
+        config_str = """
             streams:
                 variable1:
                     qartod:
@@ -70,29 +76,41 @@ class ContextConfigLoadTest(unittest.TestCase):
                             suspect_span: [1, 11]
                             fail_span: [0, 12]
         """
-        self.config = Config(config)
+        self.config = Config(config_str)
+        self.context = Context()
+        self.calls = [
+            Call(
+                stream_id='variable1',
+                context=self.context,
+                call=partial(
+                    ioos_qc.qartod.location_test,
+                    (),
+                    bbox=[-80, 40, -70, 60]
+                )
+            ),
+            Call(
+                stream_id='variable2',
+                context=self.context,
+                call=partial(
+                    ioos_qc.qartod.gross_range_test,
+                    (),
+                    suspect_span=[1, 11],
+                    fail_span=[0, 12]
+                )
+            )
+        ]
 
     def test_load(self):
-        # This config only produces one context
-        context = self.config.contexts[0]
-
-        assert 'variable1' in context.streams.keys()
-        assert qartod.location_test in context.streams['variable1'].methods
-        assert {
-            'bbox': [-80, 40, -70, 60]
-        } == context.streams['variable1'].methods[qartod.location_test]
-
-        assert 'variable2' in context.streams.keys()
-        assert qartod.gross_range_test in context.streams['variable2'].methods
-        assert {
-            'suspect_span': [1, 11],
-            'fail_span': [0, 12]
-        } == context.streams['variable2'].methods[qartod.gross_range_test]
+        for context, calls in self.config.contexts.items():
+            assert context == self.context
+            assert len(calls) == 2
+            for c in calls:
+                assert c in self.calls
 
 
-class ContextConfigRegionWindowLoadTeest(unittest.TestCase):
+class ContextConfigRegionWindowLoadTest(unittest.TestCase):
     def setUp(self):
-        config = """
+        config_str = """
             region: something
             window:
                 starting: 2020-01-01T00:00:00Z
@@ -108,35 +126,51 @@ class ContextConfigRegionWindowLoadTeest(unittest.TestCase):
                             suspect_span: [1, 11]
                             fail_span: [0, 12]
         """
-        self.config = Config(config)
+        self.config = Config(config_str)
+        self.context = Context(
+            window=tw(
+                starting=datetime(2020, 1, 1, 0, 0, 0),
+                ending=datetime(2020, 4, 1, 0, 0, 0)
+            )
+        )
+        self.calls = [
+            Call(
+                stream_id='variable1',
+                context=self.context,
+                call=partial(
+                    ioos_qc.qartod.location_test,
+                    (),
+                    bbox=[-80, 40, -70, 60]
+                )
+            ),
+            Call(
+                stream_id='variable2',
+                context=self.context,
+                call=partial(
+                    ioos_qc.qartod.gross_range_test,
+                    (),
+                    suspect_span=[1, 11],
+                    fail_span=[0, 12]
+                )
+            )
+        ]
 
     def test_load(self):
-        # This config only produces one context
-        context = self.config.contexts[0]
-
-        assert context.region is None
-        assert context.window.starting == datetime(2020, 1, 1, 0, 0, 0)
-        assert context.window.ending == datetime(2020, 4, 1, 0, 0, 0)
-
-        assert 'variable1' in context.streams.keys()
-        assert qartod.location_test in context.streams['variable1'].methods
-        assert {
-            'bbox': [-80, 40, -70, 60]
-        } == context.streams['variable1'].methods[qartod.location_test]
-
-        assert 'variable2' in context.streams.keys()
-        assert qartod.gross_range_test in context.streams['variable2'].methods
-        assert {
-            'suspect_span': [1, 11],
-            'fail_span': [0, 12]
-        } == context.streams['variable2'].methods[qartod.gross_range_test]
+        for context, calls in self.config.contexts.items():
+            assert context == self.context
+            assert len(calls) == 2
+            for c in calls:
+                assert c in self.calls
 
 
 class ContextListConfigLoadTest(unittest.TestCase):
     def setUp(self):
-        config = """
+        config_str = """
             contexts:
-                -   region: something
+                -   region:
+                        geometry:
+                            type: Point
+                            coordinates: [-72, 34]
                     window:
                         starting: 2020-01-01T00:00:00Z
                         ending: 2020-04-01T00:00:00Z
@@ -150,7 +184,10 @@ class ContextListConfigLoadTest(unittest.TestCase):
                                 gross_range_test:
                                     suspect_span: [1, 11]
                                     fail_span: [0, 12]
-                -   region: something else
+                -   region:
+                        geometry:
+                            type: Point
+                            coordinates: [-80,40]
                     window:
                         starting: 2020-01-01T00:00:00Z
                         ending: 2020-04-01T00:00:00Z
@@ -165,24 +202,63 @@ class ContextListConfigLoadTest(unittest.TestCase):
                                     suspect_span: [1, 11]
                                     fail_span: [0, 12]
         """
-        self.config = Config(config)
+        window = tw(
+            starting=datetime(2020, 1, 1, 0, 0, 0),
+            ending=datetime(2020, 4, 1, 0, 0, 0)
+        )
+        self.config = Config(config_str)
+        self.context1 = Context(
+            region=GeometryCollection([Point(-72, 34)]),
+            window=window
+        )
+        self.context2 = Context(
+            region=GeometryCollection([Point(-80, 40)]),
+            window=window
+        )
+        self.calls = [
+            Call(
+                stream_id='variable1',
+                context=self.context1,
+                call=partial(
+                    ioos_qc.qartod.location_test,
+                    (),
+                    bbox=[-80, 40, -70, 60]
+                )
+            ),
+            Call(
+                stream_id='variable1',
+                context=self.context2,
+                call=partial(
+                    ioos_qc.qartod.location_test,
+                    (),
+                    bbox=[-80, 40, -70, 60]
+                )
+            ),
+            Call(
+                stream_id='variable2',
+                context=self.context1,
+                call=partial(
+                    ioos_qc.qartod.gross_range_test,
+                    (),
+                    suspect_span=[1, 11],
+                    fail_span=[0, 12]
+                )
+            ),
+            Call(
+                stream_id='variable2',
+                context=self.context2,
+                call=partial(
+                    ioos_qc.qartod.gross_range_test,
+                    (),
+                    suspect_span=[1, 11],
+                    fail_span=[0, 12]
+                )
+            )
+        ]
 
     def test_load(self):
-        # This config produces two contexts with the same config
-        for context in self.config.contexts:
-            assert context.region is None
-            assert context.window.starting == datetime(2020, 1, 1, 0, 0, 0)
-            assert context.window.ending == datetime(2020, 4, 1, 0, 0, 0)
-
-            assert 'variable1' in context.streams.keys()
-            assert qartod.location_test in context.streams['variable1'].methods
-            assert {
-                'bbox': [-80, 40, -70, 60]
-            } == context.streams['variable1'].methods[qartod.location_test]
-
-            assert 'variable2' in context.streams.keys()
-            assert qartod.gross_range_test in context.streams['variable2'].methods
-            assert {
-                'suspect_span': [1, 11],
-                'fail_span': [0, 12]
-            } == context.streams['variable2'].methods[qartod.gross_range_test]
+        assert len(self.config.contexts) == 2
+        for _, calls in self.config.contexts.items():
+            assert len(calls) == 2
+            for c in calls:
+                assert c in self.calls

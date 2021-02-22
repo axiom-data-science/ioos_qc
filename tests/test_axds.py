@@ -3,15 +3,16 @@
 import logging
 import unittest
 from datetime import datetime
+from functools import partial
 
-import pytest
 import numpy as np
 import numpy.testing as npt
 
+import ioos_qc
 from ioos_qc import axds
-from ioos_qc.config import Config
 from ioos_qc.streams import NumpyStream
 from ioos_qc.results import collect_results
+from ioos_qc.config import Config, Context, Call, tw
 
 L = logging.getLogger('ioos_qc')
 L.setLevel(logging.INFO)
@@ -217,13 +218,17 @@ class AxdsValidTimeBoundsTest(unittest.TestCase):
 
         config = Config(config_str)
 
-        # This config only produces one context
-        context = config.contexts[0]
-
-        assert axds.valid_range_test in context.streams['variable1'].methods
-        assert {
-            'valid_span': ['2015-01-01T02:00:00', '2015-01-01T04:00:00']
-        } == context.streams['variable1'].methods[axds.valid_range_test]
+        assert config.calls == [
+            Call(
+                stream_id='variable1',
+                context=Context(),
+                call=partial(
+                    ioos_qc.axds.valid_range_test,
+                    (),
+                    valid_span=['2015-01-01T02:00:00', '2015-01-01T04:00:00']
+                )
+            )
+        ]
 
         ns = NumpyStream(self.times)
         results = ns.run(config)

@@ -187,18 +187,40 @@ class CFNetCDFStore(BaseStore):
                     'ioos_qc_target': cr.stream_id,
                 }
                 # If there is only one context we can write variable specific configs
+                # We can't do this across different contexts and this would repeat the regions
+                # and windows for each variable even if they are equal. This needs another look.
                 if len(config.contexts) == 1:
-                    varconfig = config.contexts[0].streams[cr.stream_id].config[cr.package][cr.test]
-                    varconfig = json.dumps(varconfig, cls=GeoNumpyDateEncoder, allow_nan=False, ignore_nan=True)
-                    attrs[column_name]['ioos_qc_config'] = varconfig
-                    if config.contexts[0].region:
-                        attrs[column_name]['ioos_qc_region'] = json.dumps(config.contexts[0].region, cls=GeoNumpyDateEncoder, allow_nan=False, ignore_nan=True)
-                    if config.contexts[0].window.starting or config.contexts[0].window.ending:
-                        attrs[column_name]['ioos_qc_window'] = json.dumps(config.contexts[0].window, cls=GeoNumpyDateEncoder, allow_nan=False, ignore_nan=True)
+                    calls = config.calls_by_stream_id(column_name)
+
+                    if not calls:
+                        # No stream_id found!
+                        continue
+
+                    # Use the first call of this stream_id. There will be only 1 because there
+                    # is only one context
+                    call = calls[0]
+                    if call.region:
+                        attrs[column_name]['ioos_qc_region'] = json.dumps(
+                            call.region,
+                            cls=GeoNumpyDateEncoder, allow_nan=False, ignore_nan=True
+                        )
+                    if call.window.starting or call.window.ending:
+                        attrs[column_name]['ioos_qc_window'] = json.dumps(
+                            call.window,
+                            cls=GeoNumpyDateEncoder, allow_nan=False, ignore_nan=True
+                        )
+
+                    qc_varconfig = json.dumps(
+                        call.config(),
+                        cls=GeoNumpyDateEncoder, allow_nan=False, ignore_nan=True
+                    )
+                    attrs[column_name]['ioos_qc_config'] = qc_varconfig
 
         if len(config.contexts) > 1:
-            # We can't represent these at the variable level, so make one global config
-            attrs['ioos_qc_config'] = json.dumps(config.config, cls=GeoNumpyDateEncoder, allow_nan=False, ignore_nan=True)
+            # We represent the config as one global config JSON object
+            attrs['ioos_qc_config'] = json.dumps(
+                config.config, cls=GeoNumpyDateEncoder, allow_nan=False, ignore_nan=True
+            )
 
         dsg_kwargs = {
             **dsg_kwargs,
@@ -212,6 +234,8 @@ class CFNetCDFStore(BaseStore):
         df['station'] = 0
         df['trajectory'] = 0
         df['profile'] = 0
+        if 'z' not in df:
+            df['z'] = 0
         ncd = dsg.from_dataframe(df, path_or_ncd, axes=self.axes, **dsg_kwargs)
         return ncd
 

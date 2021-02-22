@@ -12,19 +12,19 @@ from ioos_qc.qartod import QartodFlags
 L = logging.getLogger(__name__)  # noqa
 
 
-class StreamConfigResult(NamedTuple):
+class CallResult(NamedTuple):
     package: str
     test: str
     function: callable
     results: np.ndarray
 
     def __repr__(self):
-        return f'<CollectedResult package={self.package} test={self.test}>'
+        return f'<CallResult package={self.package} test={self.test}>'
 
 
 class ContextResult(NamedTuple):
     stream_id: str
-    results: List[StreamConfigResult]
+    results: List[CallResult]
     subset_indexes: np.ndarray
     data: np.ndarray = None
     tinp: np.ndarray = None
@@ -78,9 +78,9 @@ def collect_results_list(results):
     for r in results:
 
         cr = None
-        # Shortcut for StreamConfigResult objects when someone uses QcConfig.run() directly
+        # Shortcut for CallResult objects when someone uses QcConfig.run() directly
         # and doesn't go through a Stream object
-        if isinstance(r, StreamConfigResult):
+        if isinstance(r, CallResult):
             cr = CollectedResult(
                 stream_id=None,
                 package=r.package,
@@ -91,7 +91,7 @@ def collect_results_list(results):
             collected[cr.hash_key] = cr
             continue
 
-        # StreamConfigResults
+        # CallResults
         for tr in r.results:
 
             cr = CollectedResult(
@@ -143,16 +143,16 @@ def collect_results_dict(results):
     # ContextResults
     for r in results:
 
-        # Shortcut for StreamConfigResult objects when someone uses QcConfig.run() directly
+        # Shortcut for CallResult objects when someone uses QcConfig.run() directly
         # and doesn't go through a Stream object
-        if isinstance(r, StreamConfigResult):
+        if isinstance(r, CallResult):
             collected[r.package][r.test] = r.results
             continue
 
         flag_arr = np.ma.empty_like(r.subset_indexes, dtype='uint8')
         flag_arr.fill(QartodFlags.UNKNOWN)
 
-        # iterate over the StreamConfigResults
+        # iterate over the CallResults
         for tr in r.results:
             testpackage = tr.package
             testname = tr.test
