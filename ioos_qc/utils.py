@@ -160,6 +160,9 @@ def mapdates(dates):
     if hasattr(dates, 'dtype') and hasattr(dates.dtype, 'tz'):
         # pandas time objects with a datetime component, remove the timezone
         return dates.dt.tz_localize(None).astype('datetime64[ns]').to_numpy()
+    elif hasattr(dates, 'dtype') and hasattr(dates, 'to_numpy'):
+        # pandas time objects without a datetime component
+        return dates.to_numpy().astype('datetime64[ns]')
     elif hasattr(dates, 'dtype') and np.issubdtype(dates.dtype, np.datetime64):
         # numpy datetime objects
         return dates.astype('datetime64[ns]')
