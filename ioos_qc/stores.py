@@ -59,14 +59,14 @@ class PandasStore(BaseStore):
     def compute_aggregate(self, name='rollup'):
         """ Internally compute the total aggregate and add it to the results
         """
-        self.aggregate = CollectedResult(
+        agg = CollectedResult(
             stream_id='',
-            package='',
+            package='qartod',
             test=name,
             function=aggregate,
             results=aggregate(self.collected_results)
         )
-        self.collected_results.append(self.aggregate)
+        self.collected_results.append(agg)
 
     def save(self,
              write_data: bool = False,
