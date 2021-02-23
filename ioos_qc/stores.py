@@ -85,17 +85,17 @@ class PandasStore(BaseStore):
 
             # Add z axis
             if write_axes is True and self.axes['z'] not in df and cr.zinp is not None and cr.zinp.size != 0:
-                L.info(f"Adding columm {self.axes['z']} from stream {cr.stream_id}")
+                L.info(f"Adding column {self.axes['z']} from stream {cr.stream_id}")
                 df[self.axes['z']] = cr.zinp
 
             # Add x axis
             if write_axes is True and self.axes['x'] not in df and cr.lon is not None and cr.lon.size != 0:
-                L.info(f"Adding columm {self.axes['x']} from stream {cr.stream_id}")
+                L.info(f"Adding column {self.axes['x']} from stream {cr.stream_id}")
                 df[self.axes['x']] = cr.lon
 
             # Add x axis
             if write_axes is True and self.axes['y'] not in df and cr.lat is not None and cr.lat.size != 0:
-                L.info(f"Adding columm {self.axes['y']} from stream {cr.stream_id}")
+                L.info(f"Adding column {self.axes['y']} from stream {cr.stream_id}")
                 df[self.axes['y']] = cr.lat
 
             # Inclusion list, skip everything not defined
