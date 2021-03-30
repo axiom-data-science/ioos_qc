@@ -449,15 +449,16 @@ def climatology_test(config : Union[ClimatologyConfig, Sequence[Dict[str, Tuple]
 
 @add_flag_metadata(standard_name='spike_test_quality_flag',
                    long_name='Spike Test Quality Flag')
-def spike_test(inp : Sequence[N],
-               suspect_threshold: N,
-               fail_threshold: N
+def spike_test(inp: Sequence[N],
+               suspect_threshold: N = None,
+               fail_threshold: N = None,
+               method: str = 'average'
                ) -> np.ma.core.MaskedArray:
     """Check for spikes by checking neighboring data against thresholds
 
     Determine if there is a spike at data point n-1 by subtracting
     the midpoint of n and n-2 and taking the absolute value of this
-    quantity, and checking if it exceeds a low or high threshold.
+    quantity, and checking if it exceeds a low or high threshold (default).
     Values which do not exceed either threshold are flagged GOOD,
     values which exceed the low threshold are flagged SUSPECT,
     and values which exceed the high threshold are flagged FAIL.
@@ -467,6 +468,13 @@ def spike_test(inp : Sequence[N],
         inp: Input data as a numeric numpy array or a list of numbers.
         suspect_threshold: The SUSPECT threshold value, in observations units.
         fail_threshold: The SUSPECT threshold value, in observations units.
+        method: ['average'(default),'differential'] optional input to assign the method used to detect spikes.
+            "average": Determine if there is a spike at data point n-1 by subtracting
+                the midpoint of n and n-2 and taking the absolute value of this
+                quantity, and checking if it exceeds a low or high threshold.
+            "differential": Determine if there is a spike at data point n by calculating the difference
+                between n and n-1 and n+1 and n variation. To considered, (n - n-1)*(n+1 - n) should
+                be smaller than zero (in opposite direction).
 
     Returns:
         A masked array of flag values equal in size to that of the input.
@@ -480,24 +488,41 @@ def spike_test(inp : Sequence[N],
     original_shape = inp.shape
     inp = inp.flatten()
 
-    # Calculate the average of n-2 and n
-    ref = np.zeros(inp.size, dtype=np.float64)
-    ref[1:-1] = (inp[0:-2] + inp[2:]) / 2
-    ref = np.ma.masked_invalid(ref)
+    # Apply different method
+    if method == 'average':
+        # Calculate the average of n-2 and n
+        ref = np.zeros(inp.size, dtype=np.float64)
+        ref[1:-1] = (inp[0:-2] + inp[2:]) / 2
+        ref = np.ma.masked_invalid(ref)
+
+        # Calculate the (n-1 - ref) difference
+        diff = np.abs(inp - ref)
+    elif method == 'differential':
+        ref = np.ma.diff(inp)
+
+        # Find the minimum variation prior and after the n value
+        diff = np.ma.zeros(inp.size, dtype=np.float64)
+        diff[1:-1] = np.minimum(np.abs(ref[:-1]), np.abs(ref[1:]))
+
+        # Make sure that only the record (n) where the difference prior and after are opposite are considered
+        with np.errstate(invalid='ignore'):
+            diff[1:-1][ref[:-1]*ref[1:] >= 0] = 0
+    else:
+        raise ValueError('Unknown method: "{0}", only "average" and "differential" methods are available'\
+                         .format(method))
 
     # Start with everything as passing (1)
     flag_arr = np.ma.ones(inp.size, dtype='uint8')
 
-    # Calculate the (n-1 - ref) difference
-    diff = np.abs(inp - ref)
-
     # If n-1 - ref is greater than the low threshold, SUSPECT test
-    with np.errstate(invalid='ignore'):
-        flag_arr[diff > suspect_threshold] = QartodFlags.SUSPECT
+    if suspect_threshold:
+        with np.errstate(invalid='ignore'):
+            flag_arr[diff > suspect_threshold] = QartodFlags.SUSPECT
 
     # If n-1 - ref is greater than the high threshold, FAIL test
-    with np.errstate(invalid='ignore'):
-        flag_arr[diff > fail_threshold] = QartodFlags.FAIL
+    if fail_threshold:
+        with np.errstate(invalid='ignore'):
+            flag_arr[diff > fail_threshold] = QartodFlags.FAIL
 
     # test is undefined for first and last values
     flag_arr[0] = QartodFlags.UNKNOWN
