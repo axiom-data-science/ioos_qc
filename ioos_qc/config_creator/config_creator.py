@@ -1,6 +1,7 @@
 import datetime
 import json
 import logging
+from copy import copy
 from pathlib import Path
 
 from jsonschema import validate
@@ -205,6 +206,8 @@ class QcVariableConfig(dict):
             config = path_or_dict
         else:
             raise ValueError('Input is not valid file path or dict')
+
+        L.debug(f"Validating schema...")
         validate(instance=config, schema=schema)
 
         # validate test specifications only contain allowed stats and operators
@@ -264,6 +267,7 @@ class QcConfigCreator:
             qc_config (dict): Config for ioos_qc
         """
         stats = self._get_stats(variable_config)
+        L.debug("Creating config...")
         test_configs = {
             name: self._create_test_section(name, variable_config, stats) for name in variable_config['tests'].keys()
         }
@@ -276,6 +280,7 @@ class QcConfigCreator:
 
     def _load_datasets(self):
         """Load datasets"""
+        L.debug(f"Loading {len(self.config)} datasets...")
         return {name: xr.load_dataset(self.config[name]['file_path']) for name in self.config.keys()}
 
     def _determine_dataset_years(self):
@@ -388,9 +393,15 @@ class QcConfigCreator:
         """
         _, name = self._var2var_in_file(var)
         year = self.dataset_years[name]
+
+        # TODO: Support time_range that spans multiple years.
+        # For example: https://ferret.pmel.noaa.gov/pmel/erddap
+        # Dataset: sd1054
+
         start_time = f"{year}-{time_range[0].month}-{time_range[0].day}"
         end_time = f"{year}-{time_range[1].month}-{time_range[1].day}"
 
+        L.debug(f"Calculating time range betwen {start_time} and {end_time}..")
         return slice(start_time, end_time)
 
     def _get_subset(self, var, bbox, time_slice, depth=0, pad_delta=0.5):
@@ -408,9 +419,18 @@ class QcConfigCreator:
 
         # if there is no data in the subset, increase bounding box in an iterative fashion
         # - both are interpolated to daily values
+        L.debug(f"Subsetting {var} by depth={depth} and {bbox}...")
         subset = self.__get_daily_interp_subset(var, time_slice, depth, lat_mask, lon_mask)
+
+        padded = 0
         while np.nansum(subset) == 0:
+            old_bbox = copy(bbox)
             bbox = self.__apply_bbox_pad(bbox, pad_delta)
+
+            if old_bbox == bbox:
+                L.warning(f"No data found for {var} at depth={depth}")
+                break
+
             lat_mask = np.logical_and(
                 ds['lat'] >= bbox[1],
                 ds['lat'] <= bbox[3]
@@ -420,9 +440,10 @@ class QcConfigCreator:
                 ds['lon'] <= bbox[2]
             )
 
+            padded += 1
             subset = self.__get_daily_interp_subset(var, time_slice, depth, lat_mask, lon_mask)
 
-        L.info(f'used bounding box: {bbox}')
+        L.info(f'Used {bbox} for bounds after padding {padded} times')
         return subset
 
     def __apply_bbox_pad(self, bbox, pad):
